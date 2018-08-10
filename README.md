@@ -7,7 +7,9 @@ notebooks!) and then deploy a container automatically using Docker Hub. The cont
 start an rstudio session, you should go to new --> Rstudio.
 
 ![img/rstudio-session.png](img/rstudio-session.png)
-![https://user-images.githubusercontent.com/814322/43970833-b68ae4fc-9c83-11e8-8b0b-a15e89a90ec2.png](https://user-images.githubusercontent.com/814322/43970833-b68ae4fc-9c83-11e8-8b0b-a15e89a90ec2.png)
+
+And then you get rstudio! Boum!
+![img/rstudio.png](img/rstudio.png)
 
 The build->test->deploy setup will have integration for a [containershare](https://vsoch.github.io/containershare) registry. In a nutshell, when you add the [configuration files](.circleci) here to your repository and connect to continuous integration, you will get a container, Github pages to serve metadata with complete manifest and inspection of your containers. It's a completely free, transparent, and open source way to practice reproducible science. 
 
@@ -17,7 +19,7 @@ The build->test->deploy setup will have integration for a [containershare](https
 
 **Important Notes**
 
- - The [runtime.txt](runtime.txt) file must be formatted as follows: `r-<YYYY>-<MM>-<DD>` where YYYY-MM-DD is a snapshot at MRAN that will be used for installing libraries.
+u - The [runtime.txt](runtime.txt) file must be formatted as follows: `r-<YYYY>-<MM>-<DD>` where YYYY-MM-DD is a snapshot at MRAN that will be used for installing libraries.
  - The [install.R](install.R) (optional) will be executed during build, and can be used to install libraries.
  - Both [RStudio](https://www.rstudio.com/) and [IRKernel](https://irkernel.github.io/) are installed by default, so you can use either the Jupyter notebook interface or the RStudio interface.
  - This repository also contains an example of a Shiny app.
