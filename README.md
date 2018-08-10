@@ -9,6 +9,7 @@ start an rstudio session, you should go to new --> Rstudio.
 ![img/rstudio-session.png](img/rstudio-session.png)
 
 And then you get rstudio! Boum!
+
 ![img/rstudio.png](img/rstudio.png)
 
 The build->test->deploy setup will have integration for a [containershare](https://vsoch.github.io/containershare) registry. In a nutshell, when you add the [configuration files](.circleci) here to your repository and connect to continuous integration, you will get a container, Github pages to serve metadata with complete manifest and inspection of your containers. It's a completely free, transparent, and open source way to practice reproducible science. 
