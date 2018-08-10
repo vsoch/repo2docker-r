@@ -74,7 +74,7 @@ git clone git@github.com:<username>/repo2docker-r.git
 
 The hidden folder [.circleci/config.yml](.circleci/config.yml) has instructions for
 [CircleCI](https://circleci.com/dashboard/) to automatically discover
-and build your repo2docker julia + jupyter notebook container. There is also a [template.html](template.html)
+and build your repo2docker R notebook container. There is also a [template.html](template.html)
 file that is used as a template for your Github pages. The first does most of the steps required for
 build and deploy, including:
 
