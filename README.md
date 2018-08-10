@@ -1,9 +1,12 @@
 # repo2docker-r with R
 
-environement, runtime.txt file, and shiny app. Adopted from
+environement, runtime.txt file, and shiny app!
 
 This is a continuous build template based on the [R](https://github.com/binder-examples/r) binder example, meaning that it shows how you can install R alongside Python (meaning Jupyter
-notebooks!) and then deploy a container automatically using Docker Hub. The container also has RStudio and Shiny. Nuts!
+notebooks!) and then deploy a container automatically using Docker Hub. The container also has RStudio and Shiny. Note that to
+start an rstudio session, you should go to new --> Rstudio.
+
+![img/rstudio-session.png](img/rstudio-session.png)
 
 The build->test->deploy setup will have integration for a [containershare](https://vsoch.github.io/containershare) registry. In a nutshell, when you add the [configuration files](.circleci) here to your repository and connect to continuous integration, you will get a container, Github pages to serve metadata with complete manifest and inspection of your containers. It's a completely free, transparent, and open source way to practice reproducible science. 
 
