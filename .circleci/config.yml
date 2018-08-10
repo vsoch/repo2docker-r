@@ -1,0 +1,345 @@
+# This is derived from the config.singularity.yml recipe provided by
+# continuous build. We have added the section to calculate container similarity
+# metrics, and deploy the metrics back to the repository (on Github pages)
+# as an image manifest.
+# https://github.com/vsoch/continuous-build/tree/support/singularity/.circleci
+
+# In addition to the variables defined above, you should set the GITHUB_EMAIL
+# to be the email associated with the repo (for deploy to Github pages).
+# if not set, this step won't be done 
+
+
+################################################################################
+# Functions
+################################################################################
+
+# Defaults
+defaults: &defaults
+  docker:
+    - image: docker:18.01.0-ce-git
+  working_directory: /tmp/src
+  environment:
+    - TZ: "/usr/share/zoneinfo/America/Los_Angeles"
+
+
+# Installation
+install: &install
+    name: Install parallel gzip, gettext, python3, and jq
+    command: apk add --no-cache pigz python3 gettext jq
+
+# Environment
+sourceenv: &sourceenv
+    name: Source environment variables from the BASH_ENV
+    command: source $BASH_ENV 
+
+
+containerdiff: &containerdiff
+    name: Download and add container-diff to path
+    command: |
+        curl -LO https://storage.googleapis.com/container-diff/latest/container-diff-linux-amd64
+        chmod +x container-diff-linux-amd64
+        mkdir -p /tmp/bin
+        mv container-diff-linux-amd64 /tmp/bin
+        export PATH="/tmp/bin:${PATH}"
+        # export to bash environment
+        echo "export PATH=${PATH}" >> ${BASH_ENV}
+
+
+dockerenv: &dockerenv
+    name: Define container and Docker names
+    command: |
+        # If not set, define DOCKER_TAG
+        if [ ! -n "${DOCKER_TAG:-}" ]; then
+            DOCKER_TAG=$(echo "${CIRCLE_SHA1}" | cut -c1-10)
+        fi
+        # If not set, define CONTAINER_NAME
+        if [ ! -n "${CONTAINER_NAME:-}" ]; then
+            CONTAINER_NAME="${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
+        fi
+        echo "Container name is ${CONTAINER_NAME}"
+        # If not set, define REPO_NAME
+        if [ ! -n "${REPO_NAME:-}" ]; then
+            LOCAL_REPO="${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
+            REPO_NAME=/tmp/src
+            echo "Repository name (REPO_NAME) is not defined, will build ${LOCAL_REPO} in ${REPO_NAME}"
+        else
+            echo "Repository name found defined for build: ${REPO_NAME}"
+        fi
+        # export to bash environment
+        echo "export CONTAINER_NAME=${CONTAINER_NAME}" >> ${BASH_ENV}
+        echo "export DOCKER_TAG=${DOCKER_TAG}" >> ${BASH_ENV}
+        echo "export REPO_NAME=${REPO_NAME}" >> ${BASH_ENV}
+        cat ${BASH_ENV}
+
+
+dockerload: &dockerload
+    name: Load Docker container Image
+    no_output_timeout: 30m
+    command: | 
+      echo "Working directory is ${PWD}"
+      docker info
+      set +o pipefail
+      if [ -f /tmp/cache/container.tar.gz ]; then
+          apk update && apk add --no-cache pigz curl curl-dev
+          pigz -d --stdout /tmp/cache/container.tar.gz | docker load
+          docker images
+      fi
+
+
+dockersave: &dockersave
+    name: Docker Save
+    no_output_timeout: 40m
+    command: |
+        source ${BASH_ENV}
+        echo "Saving ${CONTAINER_NAME}:${DOCKER_TAG} to container.tar.gz"
+        mkdir -p /tmp/cache
+        docker save ${CONTAINER_NAME}:${DOCKER_TAG} \
+          | pigz -2 -p 3 > /tmp/cache/container.tar.gz
+
+
+dockerdeploy: &dockerdeploy
+    name: Deploy to Docker Hub
+    no_output_timeout: 40m
+    command: |
+      source ${BASH_ENV}
+      echo "Container name set to ${CONTAINER_NAME}:${DOCKER_TAG}"
+      if [[ -n "$DOCKER_PASS" ]]; then
+            docker login -u $DOCKER_USER -p $DOCKER_PASS
+            docker push ${CONTAINER_NAME}:${DOCKER_TAG}
+            echo "Tagging latest image..."
+            docker tag ${CONTAINER_NAME}:${DOCKER_TAG} ${CONTAINER_NAME}:latest
+            docker push ${CONTAINER_NAME}:latest
+      fi
+
+githubsetup: &githubsetup
+    name: Prepare Github account credentials
+    command: |
+        # Only proceed if we minimally have a Github email
+        if [[ -n "${GITHUB_EMAIL:-}" ]];
+            then
+                echo "Preparing Github account credentials"
+                git config --global user.email $GITHUB_EMAIL
+                # If username is defined, use it (otherwuse use circle project)
+                if [[ -n "${GITHUB_USER:-}" ]];
+                    then
+                    git config --global user.name $GITHUB_USER
+                else
+                    git config --global user.name $CIRCLE_PROJECT_USERNAME
+                fi
+        fi
+
+
+repo2docker: &repo2docker
+    name: Run jupyter-repo2docker to generate Docker Container
+    no_output_timeout: 60m
+    command: |
+        echo "0. Installing dependencies..."
+        python3 -m venv venv
+        . venv/bin/activate
+        pip install jupyter-repo2docker
+        export VERSION=$(python3 -c "import repo2docker; print(repo2docker.__version__)")
+        echo "repo2docker version: ${VERSION}"
+        echo "1. Preparing building environment"
+        echo "Working directory is ${PWD}"
+        # If not set, define NOTEBOOK_PERMISSION
+        if [ ! -n "${NOTEBOOK_PERMISSION:-}" ]; then
+            NOTEBOOK_PERMISSION=777;
+        fi
+        # If not set, define NOTEBOOK_USERNAME
+        if [ ! -n "${NOTEBOOK_USERNAME:-}" ]; then
+            NOTEBOOK_USERNAME=joyvan;
+        fi
+        source ${BASH_ENV}
+        echo "2. Running jupyter-repo2docker..."
+        echo "jupyter-repo2docker --debug --user-name ${NOTEBOOK_USERNAME} --user-id 1000 --no-run --image-name ${CONTAINER_NAME}:${DOCKER_TAG} ${REPO_NAME}"
+        jupyter-repo2docker --debug --user-name ${NOTEBOOK_USERNAME} --user-id 1000 --no-run --image-name "${CONTAINER_NAME}:${DOCKER_TAG}" "${REPO_NAME}"
+        # Issue command to make /home/${NOTEBOOK_USERNAME} read/write for any user, to support Singularity
+        echo "Changing permissions to chmod -R ${NOTEBOOK_PERMISSION} /home/${NOTEBOOK_USERNAME}"
+        docker run --name repo2docker -td "${CONTAINER_NAME}:${DOCKER_TAG}"
+        docker exec repo2docker chmod -R ${NOTEBOOK_PERMISSION} "/home/${NOTEBOOK_USERNAME}"
+        docker commit repo2docker "${CONTAINER_NAME}:${DOCKER_TAG}"
+        docker ps
+        docker images
+
+# step 1: get into functions
+# step 2: define consistent way to define variavbles for functions
+
+
+################################################################################
+# Jobs
+################################################################################
+
+
+version: 2
+jobs:
+  setup:
+    <<: *defaults
+    steps:
+      - run: *dockerenv
+      - run: *install
+      - run: *githubsetup
+
+  build:
+    <<: *defaults
+    steps:
+      - run: *install
+      - restore_cache:
+          keys:
+            - docker-v1-{{ .Branch }}
+          paths:
+            - /tmp/cache/container.tar.gz
+      - restore_cache:
+          key: dependency-cache-repo2docker
+      - checkout
+      - setup_remote_docker
+      - run: *dockerenv
+      - run: *repo2docker
+      - run: *dockersave
+      - persist_to_workspace:
+          root: /tmp
+          paths:
+            - cache/container.tar.gz
+            - src
+
+  update_cache:
+    <<: *defaults
+    steps:
+      - attach_workspace:
+          at: /tmp
+      - save_cache:
+         key: docker-v1-{{ .Branch }}
+         paths:
+            - /tmp/cache/container.tar.gz
+
+  deploy:
+    <<: *defaults
+    steps:
+      - attach_workspace:
+          at: /tmp
+      - setup_remote_docker
+      - run: *dockerenv
+      - run: *dockerload
+      - run: *dockerdeploy
+
+  manifest:
+    <<: *defaults
+    steps:
+      - attach_workspace:
+          at: /tmp
+      - setup_remote_docker
+      - run: *dockerenv
+      - run: *dockerload
+      - run: *containerdiff
+      - run: *githubsetup
+      - run: *install
+      - add_ssh_keys: 
+          fingerprints: 
+            - "d4:37:a4:3b:1e:ea:eb:6a:b7:e3:0a:52:e2:8c:ac:d0"
+      - run:
+          name: Generate Inspection Manifest
+          no_output_timeout: 40m
+          command: |
+            source ${BASH_ENV}
+            which container-diff-linux-amd64
+            if [[ -n "${GITHUB_EMAIL:-}" ]];
+                then
+                    echo "=== Deploying manifests to Github Pages ==="
+                    echo "Generating Container Manifest"
+                    echo "1. Checking out Github pages branch"
+                    ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+                    git clone "git@github.com:${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git" out
+                    cd out
+                    # either checkout github pages, or create orphan
+                    git checkout gh-pages || git checkout --orphan gh-pages
+                    # Save all previous tags, so we don't pull and re-generate
+                    mkdir -p ../out-old
+                    if ls *.json 1> /dev/null 2>&1; then
+                        cp *.json ../out-old/
+                    fi
+                    git rm -rf .
+                    # ensure that github pages are ignored
+                    mkdir -p .circleci && cp -a ../.circleci/. .circleci/.
+                    # Copy back previous files
+                    if ls ../out-old/*.json 1> /dev/null 2>&1; then
+                        cp ../out-old/*.json ${PWD}
+                    fi
+                    cp .circleci/template.html template.html
+                    # replace container name in index.html
+                    envsubst < template.html > index.html
+                    echo "2. Generating manifest for latest..."
+                    docker inspect ${CONTAINER_NAME}:${DOCKER_TAG} > manifest-latest.json
+                    # We will keep a list of tags
+                    rm -rf tags.json && touch tags.json
+                    for tag in $(curl -L -s "https://registry.hub.docker.com/v2/repositories/${CONTAINER_NAME}/tags?page_size=1024" | jq --raw-output '."results"[]["name"]')
+                      do
+                          # Add the tag to the list
+                          # when manifest doesn't exist, generate it
+                          DOCKER_MANIFEST="manifest-${tag}.json"
+                          if [ ! -f "${DOCKER_MANIFEST}" ];
+                            then
+                              echo "Generating manifest for ${DOCKER_MANIFEST}";
+                              docker pull "${CONTAINER_NAME}:${tag}";
+                              docker inspect "${CONTAINER_NAME}:${tag}" > "${DOCKER_MANIFEST}";
+                              /tmp/bin/container-diff-linux-amd64 analyze "${CONTAINER_NAME}:${tag}" --type=pip --type=file --type=apt --type=history --json > "inspect-${tag}.json";
+                          fi
+                          echo "${tag}" >> tags.json
+                    done
+                    # Copy the inspect to latest
+                    cp "inspect-${DOCKER_TAG}.json" inspect-latest.json
+                    # Write the tags json
+                    # printf '%s\n' "${tags[@]}" | jq -R . | jq -s . > tags.json;
+                    git add -A;
+                    git commit -m "Automated deployment to GitHub Pages ${CIRCLE_SHA1}" --allow-empty
+                    git push origin gh-pages
+            else
+                echo "GITHUB_EMAIL not set, skipping manifest deploy to Github pages"
+            fi
+
+
+################################################################################
+# Workflows
+################################################################################
+
+
+workflows:
+  version: 2
+  build_deploy:
+    jobs:
+      - build:
+          filters:
+            branches:
+              ignore: gh-pages
+            tags:
+              only: /.*/
+
+      - update_cache:
+          requires:
+            - build
+            - deploy
+            - manifest
+          filters:
+            branches:
+              ignore: /docs?/.*/
+            tags:
+              only: /.*/
+
+      # Upload the container to Docker Hub
+      - deploy:
+          requires:
+            - build
+          filters:
+            branches:
+              only: master
+            tags:
+              only: /.*/
+
+      # Push the manifest back to Github pages
+      - manifest:
+          requires:
+            - build
+            - deploy
+          filters:
+            branches:
+              only: master
+            tags:
+              only: /.*/
